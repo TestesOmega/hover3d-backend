@@ -63,7 +63,7 @@ def build_prompt(req: GenerateRequest) -> str:
 - Região de atuação: {req.region}"""
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "ok", "ai": "online" if API_KEY else "no_key", "model": MODEL}
 
