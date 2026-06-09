@@ -3,6 +3,7 @@
 # ============================================================
 
 import os
+import httpx
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException
@@ -26,13 +27,22 @@ app.add_middleware(
 )
 
 
-# ── Helpers ──────────────────────────────────────────────────
+# ── Helpers Supabase (REST direto) ───────────────────────────
 
-def get_supabase():
+def sb_headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+def sb_url(table: str, qs: str = "") -> str:
+    return f"{SUPABASE_URL}/rest/v1/{table}{qs}"
+
+def sb_check():
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise HTTPException(status_code=503, detail="Supabase não configurado.")
-    from supabase import create_client
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def send_alert(event: dict, when: str):
@@ -162,22 +172,28 @@ def generate(req: GenerateRequest):
 
 @app.get("/api/events")
 def list_events():
-    sb = get_supabase()
-    res = sb.table("events").select("*").order("date").order("time").execute()
-    return res.data
+    sb_check()
+    with httpx.Client() as client:
+        res = client.get(sb_url("events", "?select=*&order=date.asc,time.asc"), headers=sb_headers())
+        res.raise_for_status()
+        return res.json()
 
 
 @app.post("/api/events", status_code=201)
 def create_event(ev: EventCreate):
-    sb  = get_supabase()
-    res = sb.table("events").insert(ev.model_dump()).execute()
-    return res.data[0]
+    sb_check()
+    with httpx.Client() as client:
+        res = client.post(sb_url("events"), headers=sb_headers(), json=ev.model_dump())
+        res.raise_for_status()
+        return res.json()[0]
 
 
 @app.delete("/api/events/{event_id}", status_code=204)
 def delete_event(event_id: str):
-    sb = get_supabase()
-    sb.table("events").delete().eq("id", event_id).execute()
+    sb_check()
+    with httpx.Client() as client:
+        res = client.delete(sb_url("events", f"?id=eq.{event_id}"), headers=sb_headers())
+        res.raise_for_status()
 
 
 # ── Rota: cron ───────────────────────────────────────────────
@@ -187,31 +203,38 @@ def check_events():
     if not RESEND_KEY or not EMAIL_DESTINO:
         raise HTTPException(status_code=503, detail="Resend ou EMAIL_DESTINO não configurados.")
 
-    sb       = get_supabase()
+    sb_check()
     br_tz    = ZoneInfo("America/Sao_Paulo")
     today    = datetime.now(br_tz).date()
     tomorrow = today + timedelta(days=1)
+    sent     = []
 
-    today_evs    = sb.table("events").select("*").eq("date", today.isoformat()).eq("email_sent_day_of", False).execute()
-    tomorrow_evs = sb.table("events").select("*").eq("date", tomorrow.isoformat()).eq("email_sent_day_before", False).execute()
+    with httpx.Client() as client:
+        today_evs = client.get(
+            sb_url("events", f"?select=*&date=eq.{today.isoformat()}&email_sent_day_of=eq.false"),
+            headers=sb_headers()
+        ).json()
 
-    sent = []
+        tomorrow_evs = client.get(
+            sb_url("events", f"?select=*&date=eq.{tomorrow.isoformat()}&email_sent_day_before=eq.false"),
+            headers=sb_headers()
+        ).json()
 
-    for ev in today_evs.data:
-        try:
-            send_alert(ev, "today")
-            sb.table("events").update({"email_sent_day_of": True}).eq("id", ev["id"]).execute()
-            sent.append(f"hoje:{ev['title']}")
-        except Exception as e:
-            sent.append(f"erro:{ev['title']}:{e}")
+        for ev in today_evs:
+            try:
+                send_alert(ev, "today")
+                client.patch(sb_url("events", f"?id=eq.{ev['id']}"), headers=sb_headers(), json={"email_sent_day_of": True})
+                sent.append(f"hoje:{ev['title']}")
+            except Exception as e:
+                sent.append(f"erro:{ev['title']}:{e}")
 
-    for ev in tomorrow_evs.data:
-        try:
-            send_alert(ev, "tomorrow")
-            sb.table("events").update({"email_sent_day_before": True}).eq("id", ev["id"]).execute()
-            sent.append(f"amanha:{ev['title']}")
-        except Exception as e:
-            sent.append(f"erro:{ev['title']}:{e}")
+        for ev in tomorrow_evs:
+            try:
+                send_alert(ev, "tomorrow")
+                client.patch(sb_url("events", f"?id=eq.{ev['id']}"), headers=sb_headers(), json={"email_sent_day_before": True})
+                sent.append(f"amanha:{ev['title']}")
+            except Exception as e:
+                sent.append(f"erro:{ev['title']}:{e}")
 
     return {"sent": sent, "total": len(sent)}
 
