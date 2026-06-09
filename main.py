@@ -14,7 +14,8 @@ API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 MODEL         = os.environ.get("HOVER3D_MODEL", "claude-haiku-4-5-20251001").strip()
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "").strip()
-RESEND_KEY    = os.environ.get("RESEND_API_KEY", "").strip()
+GMAIL_USER    = os.environ.get("GMAIL_USER", "").strip()
+GMAIL_PASS    = os.environ.get("GMAIL_APP_PASS", "").strip()
 EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "").strip()
 
 app = FastAPI(title="Hover3D Backend")
@@ -46,8 +47,9 @@ def sb_check():
 
 
 def send_alert(event: dict, when: str):
-    import resend
-    resend.api_key = RESEND_KEY
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
 
     date_obj  = datetime.strptime(event["date"], "%Y-%m-%d")
     date_br   = date_obj.strftime("%d/%m/%Y")
@@ -88,12 +90,15 @@ def send_alert(event: dict, when: str):
 </div>
 </body></html>"""
 
-    resend.Emails.send({
-        "from": "Hover3D <onboarding@resend.dev>",
-        "to": [EMAIL_DESTINO],
-        "subject": subject,
-        "html": html,
-    })
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"Hover3D <{GMAIL_USER}>"
+    msg["To"]      = EMAIL_DESTINO
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(GMAIL_USER, GMAIL_PASS)
+        server.sendmail(GMAIL_USER, EMAIL_DESTINO, msg.as_string())
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -200,8 +205,8 @@ def delete_event(event_id: str):
 
 @app.get("/api/cron/check-events")
 def check_events():
-    if not RESEND_KEY or not EMAIL_DESTINO:
-        raise HTTPException(status_code=503, detail="Resend ou EMAIL_DESTINO não configurados.")
+    if not GMAIL_USER or not GMAIL_PASS or not EMAIL_DESTINO:
+        raise HTTPException(status_code=503, detail="Gmail ou EMAIL_DESTINO não configurados.")
 
     sb_check()
     br_tz    = ZoneInfo("America/Sao_Paulo")
