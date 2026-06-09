@@ -6,7 +6,7 @@ import os
 import httpx
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -43,6 +43,19 @@ def sb_url(table: str, qs: str = "") -> str:
 def sb_check():
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise HTTPException(status_code=503, detail="Supabase não configurado.")
+
+def get_current_user(authorization: str = Header(...)):
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token inválido.")
+    token = authorization[7:]
+    with httpx.Client() as client:
+        res = client.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {token}"},
+        )
+        if res.status_code != 200:
+            raise HTTPException(status_code=401, detail="Não autenticado.")
+        return res.json()
 
 
 def send_alert(event: dict, when: str):
@@ -175,28 +188,32 @@ def generate(req: GenerateRequest):
 # ── Rotas: eventos ───────────────────────────────────────────
 
 @app.get("/api/events")
-def list_events():
+def list_events(user: dict = Depends(get_current_user)):
     sb_check()
+    uid = user["id"]
     with httpx.Client() as client:
-        res = client.get(sb_url("events", "?select=*&order=date.asc,time.asc"), headers=sb_headers())
+        res = client.get(sb_url("events", f"?select=*&user_id=eq.{uid}&order=date.asc,time.asc"), headers=sb_headers())
         res.raise_for_status()
         return res.json()
 
 
 @app.post("/api/events", status_code=201)
-def create_event(ev: EventCreate):
+def create_event(ev: EventCreate, user: dict = Depends(get_current_user)):
     sb_check()
+    data = ev.model_dump()
+    data["user_id"] = user["id"]
     with httpx.Client() as client:
-        res = client.post(sb_url("events"), headers=sb_headers(), json=ev.model_dump())
+        res = client.post(sb_url("events"), headers=sb_headers(), json=data)
         res.raise_for_status()
         return res.json()[0]
 
 
 @app.delete("/api/events/{event_id}", status_code=204)
-def delete_event(event_id: str):
+def delete_event(event_id: str, user: dict = Depends(get_current_user)):
     sb_check()
+    uid = user["id"]
     with httpx.Client() as client:
-        res = client.delete(sb_url("events", f"?id=eq.{event_id}"), headers=sb_headers())
+        res = client.delete(sb_url("events", f"?id=eq.{event_id}&user_id=eq.{uid}"), headers=sb_headers())
         res.raise_for_status()
 
 
