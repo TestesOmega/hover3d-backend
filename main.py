@@ -58,6 +58,50 @@ def get_current_user(authorization: str = Header(...)):
         return res.json()
 
 
+def send_confirmation(event: dict, email_destino: str):
+    date_br  = datetime.strptime(event["date"], "%Y-%m-%d").strftime("%d/%m/%Y")
+    time_str = event["time"][:5]
+    title    = event["title"]
+    location = event.get("location") or ""
+    location_row = f"<p style='margin:6px 0;color:#8B82A8;font-size:14px;'>📍 {location}</p>" if location else ""
+
+    html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#0D0B14;font-family:Arial,sans-serif;">
+<div style="max-width:560px;margin:32px auto;background:#13101E;border-radius:12px;overflow:hidden;border:1px solid #2A2240;">
+  <div style="background:linear-gradient(135deg,#8B5CF6,#6D28D9);padding:24px 32px;">
+    <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;">Hover3D</h1>
+    <p style="margin:4px 0 0;color:rgba(255,255,255,0.7);font-size:13px;">Evento cadastrado com sucesso</p>
+  </div>
+  <div style="padding:32px;">
+    <div style="background:#1C1829;border:1px solid #2A2240;border-radius:10px;padding:24px;">
+      <span style="background:#22c55e;color:#fff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;">✓ Cadastrado</span>
+      <h2 style="color:#EDE9FF;font-size:20px;margin:14px 0 10px;">{title}</h2>
+      <p style="margin:6px 0;color:#8B82A8;font-size:14px;">📅 {date_br}</p>
+      <p style="margin:6px 0;color:#8B82A8;font-size:14px;">🕐 {time_str}</p>
+      {location_row}
+    </div>
+    <p style="color:#8B82A8;font-size:13px;margin-top:20px;line-height:1.6;">
+      Você receberá lembretes automáticos no dia anterior e no dia do evento, às 4h da manhã.
+    </p>
+  </div>
+</div>
+</body></html>"""
+
+    with httpx.Client() as client:
+        res = client.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"api-key": BREVO_KEY, "Content-Type": "application/json"},
+            json={
+                "sender": {"name": "Hover3D", "email": "admhospitalconchas@gmail.com"},
+                "to": [{"email": email_destino}],
+                "subject": f"✅ Evento cadastrado: {title}",
+                "htmlContent": html,
+            },
+            timeout=15,
+        )
+        res.raise_for_status()
+
+
 def send_alert(event: dict, when: str, email_destino: str):
     date_obj  = datetime.strptime(event["date"], "%Y-%m-%d")
     date_br   = date_obj.strftime("%d/%m/%Y")
@@ -254,10 +298,22 @@ def create_event(ev: EventCreate, user: dict = Depends(get_current_user)):
     sb_check()
     data = ev.model_dump()
     data["user_id"] = user["id"]
+    uid = user["id"]
     with httpx.Client() as client:
         res = client.post(sb_url("events"), headers=sb_headers(), json=data)
         res.raise_for_status()
-        return res.json()[0]
+        created = res.json()[0]
+
+        if BREVO_KEY:
+            try:
+                profile_res = client.get(sb_url("profiles", f"?id=eq.{uid}&select=notification_email,notification_accepted"), headers=sb_headers())
+                profiles = profile_res.json()
+                if profiles and profiles[0].get("notification_accepted") and profiles[0].get("notification_email"):
+                    send_confirmation(created, profiles[0]["notification_email"])
+            except Exception:
+                pass
+
+        return created
 
 
 @app.delete("/api/events/{event_id}", status_code=204)
