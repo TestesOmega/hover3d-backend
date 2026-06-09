@@ -10,12 +10,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "")
-MODEL         = os.environ.get("HOVER3D_MODEL", "claude-haiku-4-5-20251001")
-SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
-RESEND_KEY    = os.environ.get("RESEND_API_KEY", "")
-EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "")
+API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+MODEL         = os.environ.get("HOVER3D_MODEL", "claude-haiku-4-5-20251001").strip()
+SUPABASE_URL  = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "").strip()
+RESEND_KEY    = os.environ.get("RESEND_API_KEY", "").strip()
+EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "").strip()
 
 app = FastAPI(title="Hover3D Backend")
 
