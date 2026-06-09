@@ -96,7 +96,9 @@ def send_alert(event: dict, when: str):
     msg["To"]      = EMAIL_DESTINO
     msg.attach(MIMEText(html, "html"))
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
+        server.ehlo()
+        server.starttls()
         server.login(GMAIL_USER, GMAIL_PASS)
         server.sendmail(GMAIL_USER, EMAIL_DESTINO, msg.as_string())
 
