@@ -14,8 +14,7 @@ API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 MODEL         = os.environ.get("HOVER3D_MODEL", "claude-haiku-4-5-20251001").strip()
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "").strip()
-GMAIL_USER    = os.environ.get("GMAIL_USER", "").strip()
-GMAIL_PASS    = os.environ.get("GMAIL_APP_PASS", "").strip()
+BREVO_KEY     = os.environ.get("BREVO_API_KEY", "").strip()
 EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "").strip()
 
 app = FastAPI(title="Hover3D Backend")
@@ -47,10 +46,6 @@ def sb_check():
 
 
 def send_alert(event: dict, when: str):
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-
     date_obj  = datetime.strptime(event["date"], "%Y-%m-%d")
     date_br   = date_obj.strftime("%d/%m/%Y")
     time_str  = event["time"][:5]
@@ -90,17 +85,19 @@ def send_alert(event: dict, when: str):
 </div>
 </body></html>"""
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"Hover3D <{GMAIL_USER}>"
-    msg["To"]      = EMAIL_DESTINO
-    msg.attach(MIMEText(html, "html"))
-
-    with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
-        server.ehlo()
-        server.starttls()
-        server.login(GMAIL_USER, GMAIL_PASS)
-        server.sendmail(GMAIL_USER, EMAIL_DESTINO, msg.as_string())
+    with httpx.Client() as client:
+        res = client.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"api-key": BREVO_KEY, "Content-Type": "application/json"},
+            json={
+                "sender": {"name": "Hover3D", "email": "admhospitalconchas@gmail.com"},
+                "to": [{"email": EMAIL_DESTINO}],
+                "subject": subject,
+                "htmlContent": html,
+            },
+            timeout=15,
+        )
+        res.raise_for_status()
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -207,8 +204,8 @@ def delete_event(event_id: str):
 
 @app.get("/api/cron/check-events")
 def check_events():
-    if not GMAIL_USER or not GMAIL_PASS or not EMAIL_DESTINO:
-        raise HTTPException(status_code=503, detail="Gmail ou EMAIL_DESTINO não configurados.")
+    if not BREVO_KEY or not EMAIL_DESTINO:
+        raise HTTPException(status_code=503, detail="BREVO_API_KEY ou EMAIL_DESTINO não configurados.")
 
     sb_check()
     br_tz    = ZoneInfo("America/Sao_Paulo")
