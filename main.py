@@ -185,6 +185,21 @@ def generate(req: GenerateRequest):
         raise HTTPException(status_code=500, detail=f"Erro na geração: {e}")
 
 
+# ── Rotas: perfil ────────────────────────────────────────────
+
+@app.get("/api/profile")
+def get_profile(user: dict = Depends(get_current_user)):
+    sb_check()
+    uid = user["id"]
+    with httpx.Client() as client:
+        res = client.get(sb_url("profiles", f"?id=eq.{uid}&select=ativo,plano,vencimento"), headers=sb_headers())
+        res.raise_for_status()
+        rows = res.json()
+        if not rows:
+            return {"ativo": False, "plano": "basico", "vencimento": None}
+        return rows[0]
+
+
 # ── Rotas: eventos ───────────────────────────────────────────
 
 @app.get("/api/events")
