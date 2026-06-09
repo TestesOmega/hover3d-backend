@@ -58,7 +58,7 @@ def get_current_user(authorization: str = Header(...)):
         return res.json()
 
 
-def send_alert(event: dict, when: str):
+def send_alert(event: dict, when: str, email_destino: str):
     date_obj  = datetime.strptime(event["date"], "%Y-%m-%d")
     date_br   = date_obj.strftime("%d/%m/%Y")
     time_str  = event["time"][:5]
@@ -104,7 +104,7 @@ def send_alert(event: dict, when: str):
             headers={"api-key": BREVO_KEY, "Content-Type": "application/json"},
             json={
                 "sender": {"name": "Hover3D", "email": "admhospitalconchas@gmail.com"},
-                "to": [{"email": EMAIL_DESTINO}],
+                "to": [{"email": email_destino}],
                 "subject": subject,
                 "htmlContent": html,
             },
@@ -131,6 +131,10 @@ class EventCreate(BaseModel):
     time:        str
     location:    str = ""
     description: str = ""
+
+class NotificationUpdate(BaseModel):
+    notification_email:    str
+    notification_accepted: bool
 
 
 # ── Rotas: saúde ─────────────────────────────────────────────
@@ -200,6 +204,39 @@ def get_profile(user: dict = Depends(get_current_user)):
         return rows[0]
 
 
+# ── Rotas: notificações ──────────────────────────────────────
+
+@app.get("/api/notification")
+def get_notification(user: dict = Depends(get_current_user)):
+    sb_check()
+    uid = user["id"]
+    with httpx.Client() as client:
+        res = client.get(sb_url("profiles", f"?id=eq.{uid}&select=notification_email,notification_accepted"), headers=sb_headers())
+        res.raise_for_status()
+        rows = res.json()
+        if not rows:
+            return {"notification_email": "", "notification_accepted": False}
+        return {
+            "notification_email":    rows[0].get("notification_email") or "",
+            "notification_accepted": rows[0].get("notification_accepted") or False,
+        }
+
+
+@app.put("/api/notification")
+def update_notification(data: NotificationUpdate, user: dict = Depends(get_current_user)):
+    sb_check()
+    uid = user["id"]
+    payload = {"id": uid, "notification_email": data.notification_email, "notification_accepted": data.notification_accepted}
+    with httpx.Client() as client:
+        res = client.post(
+            sb_url("profiles") + "?on_conflict=id",
+            headers={**sb_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json=payload,
+        )
+        res.raise_for_status()
+        return res.json()[0]
+
+
 # ── Rotas: eventos ───────────────────────────────────────────
 
 @app.get("/api/events")
@@ -236,14 +273,26 @@ def delete_event(event_id: str, user: dict = Depends(get_current_user)):
 
 @app.get("/api/cron/check-events")
 def check_events():
-    if not BREVO_KEY or not EMAIL_DESTINO:
-        raise HTTPException(status_code=503, detail="BREVO_API_KEY ou EMAIL_DESTINO não configurados.")
+    if not BREVO_KEY:
+        raise HTTPException(status_code=503, detail="BREVO_API_KEY não configurada.")
 
     sb_check()
     br_tz    = ZoneInfo("America/Sao_Paulo")
     today    = datetime.now(br_tz).date()
     tomorrow = today + timedelta(days=1)
     sent     = []
+    email_cache: dict = {}
+
+    def get_user_email(uid: str, client: httpx.Client) -> str | None:
+        if uid in email_cache:
+            return email_cache[uid]
+        res = client.get(sb_url("profiles", f"?id=eq.{uid}&select=notification_email,notification_accepted"), headers=sb_headers())
+        rows = res.json() if res.status_code == 200 else []
+        if rows and rows[0].get("notification_accepted") and rows[0].get("notification_email"):
+            email_cache[uid] = rows[0]["notification_email"]
+        else:
+            email_cache[uid] = None
+        return email_cache[uid]
 
     with httpx.Client() as client:
         today_evs = client.get(
@@ -258,7 +307,11 @@ def check_events():
 
         for ev in today_evs:
             try:
-                send_alert(ev, "today")
+                email = get_user_email(ev["user_id"], client)
+                if not email:
+                    sent.append(f"sem_email:{ev['title']}")
+                    continue
+                send_alert(ev, "today", email)
                 client.patch(sb_url("events", f"?id=eq.{ev['id']}"), headers=sb_headers(), json={"email_sent_day_of": True})
                 sent.append(f"hoje:{ev['title']}")
             except Exception as e:
@@ -266,7 +319,11 @@ def check_events():
 
         for ev in tomorrow_evs:
             try:
-                send_alert(ev, "tomorrow")
+                email = get_user_email(ev["user_id"], client)
+                if not email:
+                    sent.append(f"sem_email:{ev['title']}")
+                    continue
+                send_alert(ev, "tomorrow", email)
                 client.patch(sb_url("events", f"?id=eq.{ev['id']}"), headers=sb_headers(), json={"email_sent_day_before": True})
                 sent.append(f"amanha:{ev['title']}")
             except Exception as e:
@@ -281,7 +338,7 @@ if __name__ == "__main__":
     print("  Hover3D — Backend")
     print(f"  IA:       {'online' if API_KEY else 'sem chave'}")
     print(f"  Supabase: {'ok' if SUPABASE_URL else 'sem chave'}")
-    print(f"  Resend:   {'ok' if RESEND_KEY else 'sem chave'}")
+    print(f"  Brevo:    {'ok' if BREVO_KEY else 'sem chave'}")
     print("  http://127.0.0.1:8000")
     print("=" * 50)
     uvicorn.run(app, host="127.0.0.1", port=8000)
