@@ -93,7 +93,7 @@ def send_confirmation(event: dict, email_destino: str):
             "https://api.brevo.com/v3/smtp/email",
             headers={"api-key": BREVO_KEY, "Content-Type": "application/json"},
             json={
-                "sender": {"name": "Hover3D", "email": "admhospitalconchas@gmail.com"},
+                "sender": {"name": "Hover3D", "email": "noreply.hover3d@gmail.com"},
                 "to": [{"email": email_destino}],
                 "subject": f"✅ Evento cadastrado: {title}",
                 "htmlContent": html,
@@ -148,7 +148,7 @@ def send_alert(event: dict, when: str, email_destino: str):
             "https://api.brevo.com/v3/smtp/email",
             headers={"api-key": BREVO_KEY, "Content-Type": "application/json"},
             json={
-                "sender": {"name": "Hover3D", "email": "admhospitalconchas@gmail.com"},
+                "sender": {"name": "Hover3D", "email": "noreply.hover3d@gmail.com"},
                 "to": [{"email": email_destino}],
                 "subject": subject,
                 "htmlContent": html,
