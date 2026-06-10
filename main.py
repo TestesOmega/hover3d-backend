@@ -216,7 +216,7 @@ def build_prompt(req: GenerateRequest) -> str:
 
 
 @app.post("/api/generate")
-def generate(req: GenerateRequest):
+def generate(req: GenerateRequest, user: dict = Depends(get_current_user)):
     if not API_KEY:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY não configurada.")
     try:
