@@ -16,6 +16,7 @@ SUPABASE_URL  = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "").strip()
 BREVO_KEY     = os.environ.get("BREVO_API_KEY", "").strip()
 EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "").strip()
+CRON_SECRET   = os.environ.get("CRON_SECRET", "").strip()
 
 app = FastAPI(title="Hover3D Backend")
 
@@ -127,7 +128,7 @@ def send_alert(event: dict, when: str, email_destino: str):
 <div style="max-width:560px;margin:32px auto;background:#13101E;border-radius:12px;overflow:hidden;border:1px solid #2A2240;">
   <div style="background:linear-gradient(135deg,#8B5CF6,#6D28D9);padding:24px 32px;">
     <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;">Hover3D</h1>
-    <p style="margin:4px 0 0;color:rgba(255,255,255,0.7);font-size:13px;">Lembrete de evento — Artemis</p>
+    <p style="margin:4px 0 0;color:rgba(255,255,255,0.7);font-size:13px;">Lembrete de evento</p>
   </div>
   <div style="padding:32px;">
     <div style="background:#1C1829;border:1px solid #2A2240;border-radius:10px;padding:24px;">
@@ -328,7 +329,9 @@ def delete_event(event_id: str, user: dict = Depends(get_current_user)):
 # ── Rota: cron ───────────────────────────────────────────────
 
 @app.get("/api/cron/check-events")
-def check_events():
+def check_events(secret: str = ""):
+    if CRON_SECRET and secret != CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized.")
     if not BREVO_KEY:
         raise HTTPException(status_code=503, detail="BREVO_API_KEY não configurada.")
 
