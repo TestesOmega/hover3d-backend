@@ -3,12 +3,13 @@
 # ============================================================
 
 import os
+import re
 import httpx
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 MODEL         = os.environ.get("HOVER3D_MODEL", "claude-haiku-4-5-20251001").strip()
@@ -20,11 +21,18 @@ CRON_SECRET   = os.environ.get("CRON_SECRET", "").strip()
 
 app = FastAPI(title="Hover3D Backend")
 
+ALLOWED_ORIGINS = [
+    "https://hover3d-frontend.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:5174",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -171,15 +179,22 @@ class GenerateRequest(BaseModel):
 
 
 class EventCreate(BaseModel):
-    title:       str
-    date:        str
-    time:        str
-    location:    str = ""
-    description: str = ""
+    title:       str = Field(..., min_length=1, max_length=200)
+    date:        str = Field(..., pattern=r'^\d{4}-\d{2}-\d{2}$')
+    time:        str = Field(..., pattern=r'^\d{2}:\d{2}$')
+    location:    str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=1000)
 
 class NotificationUpdate(BaseModel):
-    notification_email:    str
+    notification_email:    str = Field(..., max_length=254)
     notification_accepted: bool
+
+    @field_validator("notification_email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', v):
+            raise ValueError("E-mail inválido.")
+        return v.lower()
 
 
 # ── Rotas: saúde ─────────────────────────────────────────────
@@ -330,7 +345,7 @@ def delete_event(event_id: str, user: dict = Depends(get_current_user)):
 
 @app.get("/api/cron/check-events")
 def check_events(secret: str = ""):
-    if CRON_SECRET and secret != CRON_SECRET:
+    if not CRON_SECRET or secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized.")
     if not BREVO_KEY:
         raise HTTPException(status_code=503, detail="BREVO_API_KEY não configurada.")
@@ -373,8 +388,8 @@ def check_events(secret: str = ""):
                 send_alert(ev, "today", email)
                 client.patch(sb_url("events", f"?id=eq.{ev['id']}"), headers=sb_headers(), json={"email_sent_day_of": True})
                 sent.append(f"hoje:{ev['title']}")
-            except Exception as e:
-                sent.append(f"erro:{ev['title']}:{e}")
+            except Exception:
+                sent.append(f"erro:{ev['id']}")
 
         for ev in tomorrow_evs:
             try:
@@ -385,8 +400,8 @@ def check_events(secret: str = ""):
                 send_alert(ev, "tomorrow", email)
                 client.patch(sb_url("events", f"?id=eq.{ev['id']}"), headers=sb_headers(), json={"email_sent_day_before": True})
                 sent.append(f"amanha:{ev['title']}")
-            except Exception as e:
-                sent.append(f"erro:{ev['title']}:{e}")
+            except Exception:
+                sent.append(f"erro:{ev['id']}")
 
     return {"sent": sent, "total": len(sent)}
 
