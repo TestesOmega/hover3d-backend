@@ -23,7 +23,7 @@ EMAIL_DESTINO            = os.environ.get("EMAIL_DESTINO", "").strip()
 CRON_SECRET              = os.environ.get("CRON_SECRET", "").strip()
 BITIBRIDGE_API_KEY       = os.environ.get("BITIBRIDGE_API_KEY", "").strip()
 BITIBRIDGE_WEBHOOK_SECRET = os.environ.get("BITIBRIDGE_WEBHOOK_SECRET", "").strip()
-PLANO_VALOR              = int(os.environ.get("PLANO_VALOR", "2900"))  # centavos (R$ 29,00)
+PLANO_VALOR              = int(os.environ.get("PLANO_VALOR", "3000"))  # centavos (R$ 30,00)
 BITIBRIDGE_URL           = "https://api.bitibridge.com/functions/v1"
 
 app = FastAPI(title="Hover3D Backend")
