@@ -447,12 +447,29 @@ async def webhook_bitibridge(request: Request):
     # Validar assinatura HMAC-SHA256 enviada pelo BitiBridge
     if BITIBRIDGE_WEBHOOK_SECRET:
         sig = request.headers.get("x-bitibridge-signature", "")
-        expected = hmac.new(
-            BITIBRIDGE_WEBHOOK_SECRET.encode(),
-            body,
-            hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(sig, expected):
+        hex_part = BITIBRIDGE_WEBHOOK_SECRET.replace("whsec_", "")
+
+        # Tenta 3 formatos possíveis da chave
+        candidates = {
+            "full_string":   BITIBRIDGE_WEBHOOK_SECRET.encode(),
+            "hex_string":    hex_part.encode(),
+        }
+        try:
+            candidates["hex_decoded"] = bytes.fromhex(hex_part)
+        except ValueError:
+            pass
+
+        matched = None
+        for fmt, key in candidates.items():
+            expected = hmac.new(key, body, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(sig, expected):
+                matched = fmt
+                break
+
+        print(f"[webhook] sig_recebida={sig[:20]}... formato_matched={matched}")
+
+        if not matched:
+            print(f"[webhook] HMAC inválido — sig={sig}")
             raise HTTPException(status_code=401, detail="Assinatura inválida.")
 
     try:
