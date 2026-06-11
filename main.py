@@ -4,20 +4,27 @@
 
 import os
 import re
+import hmac
+import hashlib
+import json
 import httpx
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-MODEL         = os.environ.get("HOVER3D_MODEL", "claude-haiku-4-5-20251001").strip()
-SUPABASE_URL  = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "").strip()
-BREVO_KEY     = os.environ.get("BREVO_API_KEY", "").strip()
-EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "").strip()
-CRON_SECRET   = os.environ.get("CRON_SECRET", "").strip()
+API_KEY                  = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+MODEL                    = os.environ.get("HOVER3D_MODEL", "claude-haiku-4-5-20251001").strip()
+SUPABASE_URL             = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_KEY             = os.environ.get("SUPABASE_KEY", "").strip()
+BREVO_KEY                = os.environ.get("BREVO_API_KEY", "").strip()
+EMAIL_DESTINO            = os.environ.get("EMAIL_DESTINO", "").strip()
+CRON_SECRET              = os.environ.get("CRON_SECRET", "").strip()
+BITIBRIDGE_API_KEY       = os.environ.get("BITIBRIDGE_API_KEY", "").strip()
+BITIBRIDGE_WEBHOOK_SECRET = os.environ.get("BITIBRIDGE_WEBHOOK_SECRET", "").strip()
+PLANO_VALOR              = int(os.environ.get("PLANO_VALOR", "2900"))  # centavos (R$ 29,00)
+BITIBRIDGE_URL           = "https://api.bitibridge.com/functions/v1"
 
 app = FastAPI(title="Hover3D Backend")
 
@@ -404,6 +411,73 @@ def check_events(secret: str = ""):
                 sent.append(f"erro:{ev['id']}")
 
     return {"sent": sent, "total": len(sent)}
+
+
+# ── Rotas: pagamento (BitiBridge) ────────────────────────────
+
+@app.post("/api/payment/create")
+def payment_create(user: dict = Depends(get_current_user)):
+    if not BITIBRIDGE_API_KEY:
+        raise HTTPException(status_code=503, detail="Gateway de pagamento não configurado.")
+    uid = user["id"]
+    with httpx.Client() as client:
+        res = client.post(
+            f"{BITIBRIDGE_URL}/depix-create-pix",
+            headers={"Authorization": f"Bearer {BITIBRIDGE_API_KEY}", "Content-Type": "application/json"},
+            json={"amount": PLANO_VALOR, "external_ref": uid, "description": "Assinatura Hover3D — 1 mês"},
+            timeout=30,
+        )
+        if not res.is_success:
+            raise HTTPException(status_code=502, detail="Erro ao criar cobrança PIX.")
+        data = res.json()
+        return {
+            "txid":       data["txid"],
+            "qr_code":    data["qr_code"],
+            "copy_paste": data["copy_paste"],
+            "amount":     data["amount"],
+            "expires_at": data.get("expires_at"),
+        }
+
+
+@app.post("/api/webhook/bitibridge")
+async def webhook_bitibridge(request: Request):
+    body = await request.body()
+
+    # Validar assinatura HMAC-SHA256 enviada pelo BitiBridge
+    if BITIBRIDGE_WEBHOOK_SECRET:
+        sig = request.headers.get("x-bitibridge-signature", "")
+        expected = hmac.new(
+            BITIBRIDGE_WEBHOOK_SECRET.encode(),
+            body,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            raise HTTPException(status_code=401, detail="Assinatura inválida.")
+
+    try:
+        payload = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Payload inválido.")
+
+    if payload.get("event") != "payment.paid":
+        return {"received": True}
+
+    uid = payload.get("external_ref")
+    if not uid:
+        return {"received": True}
+
+    sb_check()
+    br_tz      = ZoneInfo("America/Sao_Paulo")
+    vencimento = (datetime.now(br_tz) + timedelta(days=30)).date().isoformat()
+
+    with httpx.Client() as client:
+        client.post(
+            sb_url("profiles") + "?on_conflict=id",
+            headers={**sb_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json={"id": uid, "ativo": True, "vencimento": vencimento, "plano": "basico"},
+        )
+
+    return {"received": True}
 
 
 if __name__ == "__main__":
