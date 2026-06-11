@@ -427,9 +427,10 @@ def payment_create(user: dict = Depends(get_current_user)):
             json={"amount": PLANO_VALOR, "external_ref": uid, "description": "Assinatura Hover3D — 1 mês"},
             timeout=30,
         )
-        if not res.is_success:
-            raise HTTPException(status_code=502, detail="Erro ao criar cobrança PIX.")
         data = res.json()
+        if not res.is_success or data.get("error_code"):
+            detail = data.get("message") or "Erro ao criar cobrança PIX."
+            raise HTTPException(status_code=502, detail=detail)
         return {
             "txid":       data["txid"],
             "qr_code":    data["qr_code"],
