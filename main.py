@@ -362,7 +362,26 @@ def check_events(secret: str = ""):
     today    = datetime.now(br_tz).date()
     tomorrow = today + timedelta(days=1)
     sent     = []
+    expired  = []
     email_cache: dict = {}
+
+    # Expirar assinaturas vencidas
+    with httpx.Client() as client:
+        res = client.get(
+            sb_url("profiles", f"?select=id&ativo=eq.true&vencimento=lt.{today.isoformat()}"),
+            headers=sb_headers(),
+        )
+        vencidos = res.json() if res.status_code == 200 else []
+        for row in vencidos:
+            uid = row["id"]
+            client.patch(
+                sb_url("profiles", f"?id=eq.{uid}"),
+                headers=sb_headers(),
+                json={"ativo": False},
+            )
+            expired.append(uid)
+        if expired:
+            print(f"[cron] {len(expired)} assinatura(s) expirada(s): {expired}")
 
     def get_user_email(uid: str, client: httpx.Client) -> str | None:
         if uid in email_cache:
@@ -410,7 +429,7 @@ def check_events(secret: str = ""):
             except Exception:
                 sent.append(f"erro:{ev['id']}")
 
-    return {"sent": sent, "total": len(sent)}
+    return {"sent": sent, "total": len(sent), "expired": len(expired)}
 
 
 # ── Rotas: pagamento (BitiBridge) ────────────────────────────
